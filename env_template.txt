@@ -1,0 +1,34 @@
+# Google Document AI Configuration with Layout Parser
+# For Google Colab: Set these values in the notebook configuration cell
+# For local use: Copy this file to .env and fill in your actual values
+
+# Path to your Google Cloud credentials JSON file (for local use only)
+GOOGLE_APPLICATION_CREDENTIALS=credentials/docai-credentials.json
+
+# Your Google Cloud project ID (find at console.cloud.google.com)
+DOCAI_PROJECT_ID=your-project-id-here
+
+# Your Document AI LAYOUT PARSER processor ID
+# IMPORTANT: Must be a Layout Parser processor, not Document OCR!
+# Find at: console.cloud.google.com/ai/document-ai/processors
+DOCAI_PROCESSOR_ID=your-layout-parser-processor-id-here
+
+# Document AI location (us, eu, or asia)
+DOCAI_LOCATION=us
+
+# LLM API Keys (for table/flowchart conversion)
+# Use either OpenAI or Anthropic
+
+# OpenAI (recommended)
+OPENAI_API_KEY=sk-your-openai-key-here
+
+# Or Anthropic (alternative)
+# ANTHROPIC_API_KEY=sk-ant-your-anthropic-key-here
+
+# LLM Configuration
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o
+
+# Optional: Debug mode
+DEBUG_MODE=True
+
