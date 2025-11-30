@@ -32,7 +32,7 @@ Quick summary:
 
 Or use GitHub import:
 1. In Colab: **File > Open Notebook > GitHub**
-2. Enter: `abhii-01/python-automation`
+2. Enter: `abhii-01/docai-extraction-test`
 3. Select a test notebook (test1-test5.ipynb)
 
 ### 3. Run Setup Cells in Colab (2 minutes)
