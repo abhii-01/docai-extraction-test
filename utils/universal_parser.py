@@ -1,6 +1,10 @@
 """
 Universal Document Parser using Google Document AI Layout Parser
 Recursively extracts structure, tables, and images into a hierarchical JSON tree.
+
+Note: Type hints for Document AI objects are intentionally omitted because
+the Block/Document classes are not directly importable from documentai_v1.
+They exist dynamically in the API response objects.
 """
 
 import os
@@ -8,6 +12,7 @@ from typing import List, Dict, Any, Optional
 from google.cloud import documentai_v1 as documentai
 from pdf2image import convert_from_path
 from PIL import Image
+
 
 class UniversalParser:
     """
@@ -55,110 +60,148 @@ class UniversalParser:
             print(f"Warning: Could not load PDF images ({e}). Image extraction will be skipped.")
             page_images = []
 
-        # 3. Begin Recursive Parsing from the Layout root
+        # 3. Get the full document text (used for text_anchor extraction)
+        full_text = getattr(doc, 'text', '') or ''
+
+        # 4. Begin Recursive Parsing from the Layout root
         # Layout Parser results are in doc.document_layout.blocks
-        root_blocks = doc.document_layout.blocks
+        root_blocks = []
+        if hasattr(doc, 'document_layout') and doc.document_layout:
+            root_blocks = getattr(doc.document_layout, 'blocks', []) or []
         
         parsed_structure = []
         for block in root_blocks:
-            node = self._visit_block(block, doc, page_images, pdf_path)
+            node = self._visit_block(block, full_text, page_images, pdf_path)
             if node:
                 parsed_structure.append(node)
+        
+        # 5. Get page count safely
+        page_count = len(doc.pages) if hasattr(doc, 'pages') and doc.pages else 0
                 
         result = {
             "metadata": {
                 "filename": os.path.basename(pdf_path),
-                "page_count": len(doc.pages),
-                "text_length": len(doc.text)
+                "page_count": page_count,
+                "text_length": len(full_text)
             },
             "structure": parsed_structure
         }
         
         return result
 
-    def _visit_block(self, block, doc, page_images: List[Image.Image], pdf_path: str) -> Optional[Dict[str, Any]]:
+    def _visit_block(self, block, full_text: str, page_images: List[Image.Image], pdf_path: str) -> Optional[Dict[str, Any]]:
         """
         Recursively processes a block and its children.
+        Uses defensive attribute access to handle API variations.
         """
         # 1. Identify Block Type
         block_type = self._get_block_type(block)
         
-        # 2. Base Node Structure
+        # 2. Get block ID safely
+        block_id = getattr(block, 'block_id', None) or "unknown"
+        
+        # 3. Get page number safely
+        page_span = getattr(block, 'page_span', None)
+        page_num = getattr(page_span, 'page_start', 1) if page_span else 1
+        
+        # 4. Get bounding box safely
+        layout = getattr(block, 'layout', None)
+        bbox = None
+        if layout:
+            bounding_poly = getattr(layout, 'bounding_poly', None)
+            if bounding_poly:
+                bbox = self._normalize_bbox(bounding_poly)
+        
+        # 5. Base Node Structure
         node = {
-            "id": block.block_id,
+            "id": block_id,
             "type": block_type,
-            "page": block.page_span.page_start if block.page_span else 1,
-            "bbox": self._normalize_bbox(block.layout.bounding_poly) if block.layout.bounding_poly else None,
+            "page": page_num,
+            "bbox": bbox,
             "children": []
         }
 
-        # 3. Handle Content based on Type
+        # 6. Handle Content based on Type
         
         # CASE A: TABLES
-        if block.table_block:
-            node["type"] = "table" # Ensure type is set explicitly
-            node["data"] = self._extract_table_grid(block.table_block, doc.text)
-            # Tables usually don't have children in the layout sense we care about
+        table_block = getattr(block, 'table_block', None)
+        if table_block:
+            node["type"] = "table"
+            node["data"] = self._extract_table_grid(table_block, full_text)
             return node
 
         # CASE B: IMAGES / CHARTS
-        # Note: Layout Parser might classify things as 'image' inside a text_block type
-        # or as a dedicated image_block.
-        elif block.image_block or (block.text_block and block_type in ["image", "figure", "chart", "diagram"]):
-            node["type"] = block_type if block_type in ["image", "figure", "chart", "diagram"] else "image"
+        image_block = getattr(block, 'image_block', None)
+        text_block = getattr(block, 'text_block', None)
+        
+        if image_block or (text_block and block_type in ["image", "figure", "chart", "diagram", "Figure", "Image"]):
+            node["type"] = block_type if block_type not in ["unknown"] else "image"
             
             if page_images:
-                image_path = self._save_crop(block, page_images, pdf_path)
-                node["file_path"] = image_path
+                image_path = self._save_crop(block, page_images)
+                if image_path:
+                    node["file_path"] = image_path
             return node
 
         # CASE C: LISTS
-        elif block.list_block:
+        list_block = getattr(block, 'list_block', None)
+        if list_block:
             node["type"] = "list"
-            # List blocks often contain list items as children blocks (if nested) 
-            # or we might need to look at text_block.blocks if defined there.
-            # Document AI structure can vary, but we'll fall through to text block recursion below if present.
+            # Fall through to text block handling below for content
 
         # CASE D: TEXT & CONTAINERS (Headings, Paragraphs, Sections)
-        if block.text_block:
-            node["text"] = self._get_text(block.layout.text_anchor, doc.text)
+        if text_block:
+            # Extract text using text_anchor
+            text_anchor = getattr(layout, 'text_anchor', None) if layout else None
+            node["text"] = self._get_text(text_anchor, full_text)
             
             # --- RECURSION ---
-            # Layout Parser blocks can be nested. 
-            if block.text_block.blocks:
-                for child_block in block.text_block.blocks:
-                    child_node = self._visit_block(child_block, doc, page_images, pdf_path)
-                    if child_node:
-                        node["children"].append(child_node)
+            # Layout Parser blocks can be nested inside text_block.blocks
+            child_blocks = getattr(text_block, 'blocks', None) or []
+            for child_block in child_blocks:
+                child_node = self._visit_block(child_block, full_text, page_images, pdf_path)
+                if child_node:
+                    node["children"].append(child_node)
             
             return node
             
-        return None # Skip empty/unknown blocks
+        return None  # Skip empty/unknown blocks
 
     def _get_block_type(self, block) -> str:
-        """Determines the semantic type of the block."""
-        if block.table_block:
+        """Determines the semantic type of the block using defensive attribute access."""
+        # Check for specific block types
+        if getattr(block, 'table_block', None):
             return "table"
-        if block.image_block:
+        if getattr(block, 'image_block', None):
             return "image"
-        if block.list_block:
+        if getattr(block, 'list_block', None):
             return "list"
         
-        if block.text_block and block.text_block.type_:
-            return block.text_block.type_
+        # Check text_block.type_ for semantic type (heading, paragraph, etc.)
+        text_block = getattr(block, 'text_block', None)
+        if text_block:
+            type_value = getattr(text_block, 'type_', None)
+            if type_value:
+                # type_ might be an enum or string, convert to string
+                return str(type_value)
             
         return "unknown"
 
     def _get_text(self, text_anchor, full_text: str) -> str:
         """Extracts text from the document string using the anchor segments."""
-        if not text_anchor or not text_anchor.text_segments:
+        if not text_anchor:
+            return ""
+        
+        text_segments = getattr(text_anchor, 'text_segments', None) or []
+        if not text_segments:
             return ""
             
         extracted_text = ""
-        for segment in text_anchor.text_segments:
-            start = int(segment.start_index)
-            end = int(segment.end_index)
-            extracted_text += full_text[start:end]
+        for segment in text_segments:
+            start = int(getattr(segment, 'start_index', 0) or 0)
+            end = int(getattr(segment, 'end_index', 0) or 0)
+            if end > start and end <= len(full_text):
+                extracted_text += full_text[start:end]
             
         return extracted_text.strip()
 
@@ -168,17 +211,24 @@ class UniversalParser:
         """
         rows_data = []
         
-        # Combine header and body rows
-        all_rows = list(table_block.header_rows) + list(table_block.body_rows)
+        # Combine header and body rows safely
+        header_rows = list(getattr(table_block, 'header_rows', []) or [])
+        body_rows = list(getattr(table_block, 'body_rows', []) or [])
+        all_rows = header_rows + body_rows
         
         for row in all_rows:
             row_cells = []
-            for cell in row.cells:
-                cell_text = self._get_text(cell.layout.text_anchor, full_text)
+            cells = getattr(row, 'cells', []) or []
+            for cell in cells:
+                # Get cell text via layout.text_anchor
+                cell_layout = getattr(cell, 'layout', None)
+                cell_text_anchor = getattr(cell_layout, 'text_anchor', None) if cell_layout else None
+                cell_text = self._get_text(cell_text_anchor, full_text)
+                
                 cell_info = {
                     "text": cell_text,
-                    "row_span": cell.row_span,
-                    "col_span": cell.col_span
+                    "row_span": getattr(cell, 'row_span', 1) or 1,
+                    "col_span": getattr(cell, 'col_span', 1) or 1
                 }
                 row_cells.append(cell_info)
             rows_data.append(row_cells)
@@ -193,15 +243,23 @@ class UniversalParser:
             "simple_matrix": simple_matrix
         }
 
-    def _save_crop(self, block, page_images: List[Image.Image], pdf_path: str) -> Optional[str]:
+    def _save_crop(self, block, page_images: List[Image.Image]) -> Optional[str]:
         """
         Crops the region from the page image and saves it to disk.
         """
         try:
-            if not block.layout.bounding_poly:
+            layout = getattr(block, 'layout', None)
+            if not layout:
+                return None
+                
+            bounding_poly = getattr(layout, 'bounding_poly', None)
+            if not bounding_poly:
                 return None
 
-            page_idx = block.page_span.page_start - 1 # 0-indexed
+            page_span = getattr(block, 'page_span', None)
+            page_start = getattr(page_span, 'page_start', 1) if page_span else 1
+            page_idx = page_start - 1  # 0-indexed
+            
             if page_idx < 0 or page_idx >= len(page_images):
                 return None
                 
@@ -209,34 +267,48 @@ class UniversalParser:
             width, height = image.size
             
             # Get normalized vertices
-            vertices = block.layout.bounding_poly.normalized_vertices
+            vertices = getattr(bounding_poly, 'normalized_vertices', None) or []
             if not vertices:
                 return None
                 
             # Calculate pixel coordinates
-            x_min = int(min(v.x for v in vertices) * width)
-            y_min = int(min(v.y for v in vertices) * height)
-            x_max = int(max(v.x for v in vertices) * width)
-            y_max = int(max(v.y for v in vertices) * height)
+            x_coords = [getattr(v, 'x', 0) or 0 for v in vertices]
+            y_coords = [getattr(v, 'y', 0) or 0 for v in vertices]
+            
+            x_min = int(min(x_coords) * width)
+            y_min = int(min(y_coords) * height)
+            x_max = int(max(x_coords) * width)
+            y_max = int(max(y_coords) * height)
+            
+            # Validate crop box
+            if x_max <= x_min or y_max <= y_min:
+                return None
             
             # Crop
             cropped_img = image.crop((x_min, y_min, x_max, y_max))
             
             # Save
-            filename = f"block_{block.block_id}.png"
+            block_id = getattr(block, 'block_id', 'unknown') or 'unknown'
+            # Sanitize block_id for filename
+            safe_block_id = str(block_id).replace('/', '_').replace('\\', '_')
+            filename = f"block_{safe_block_id}.png"
             save_path = os.path.join(self.images_dir, filename)
             cropped_img.save(save_path)
             
             return save_path
             
         except Exception as e:
-            print(f"Error saving crop for block {block.block_id}: {e}")
+            block_id = getattr(block, 'block_id', 'unknown')
+            print(f"Error saving crop for block {block_id}: {e}")
             return None
 
     def _normalize_bbox(self, bbox) -> List[float]:
         """Returns [min_x, min_y, max_x, max_y] normalized coordinates."""
-        if bbox.normalized_vertices:
-            xs = [v.x for v in bbox.normalized_vertices]
-            ys = [v.y for v in bbox.normalized_vertices]
-            return [min(xs), min(ys), max(xs), max(ys)]
-        return []
+        vertices = getattr(bbox, 'normalized_vertices', None) or []
+        if not vertices:
+            return []
+            
+        x_coords = [getattr(v, 'x', 0) or 0 for v in vertices]
+        y_coords = [getattr(v, 'y', 0) or 0 for v in vertices]
+        
+        return [min(x_coords), min(y_coords), max(x_coords), max(y_coords)]
