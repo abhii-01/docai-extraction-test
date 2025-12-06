@@ -8,10 +8,13 @@ Testing Google Document AI Layout Parser for PDF text extraction. Goal is to ext
 
 **Date:** Dec 6, 2025
 
-Restructured the project to use an exploratory approach:
-- Archived old test notebooks (test1-test5)
-- Created new `docai_exploration.ipynb` for general extraction first
-- Approach: Extract everything, examine output, then tune
+**Latest Update:** Added recursive block extraction to handle Layout Parser's hierarchical response structure.
+
+Key findings:
+- Layout Parser returns `document.document_layout.blocks` (NOT `document.text` or `document.pages`)
+- Blocks are **hierarchical** - paragraphs are nested inside headings/sections
+- Initial extraction only got 5 top-level blocks (headings)
+- Recursive extraction now captures all nested content
 
 ## Key Files
 
@@ -32,7 +35,7 @@ Restructured the project to use an exploratory approach:
    - Initialize client and verify
    - Upload PDF
 3. Run Section 2 to process document
-4. Run Section 3 to explore what the API returns
+4. Run Section 3 to explore what the API returns (includes recursive extraction)
 5. Run Section 4 to save and download results
 
 ## Required Configuration
@@ -45,24 +48,41 @@ DOCAI_LOCATION = "us"  # or eu, asia
 
 Also need: Google Cloud service account JSON file with Document AI access.
 
-## Known Issue
+## Layout Parser Response Structure
 
-Previous test1 output only showed headings (5 blocks), missing paragraph content. The exploration notebook now captures:
-- `document.text` - full OCR text
-- `document.pages[].paragraphs` - page-level paragraphs
-- `document.document_layout.blocks` - layout-detected blocks
+The Layout Parser processor returns data differently than Document OCR:
 
-Need to compare these to find the best extraction method.
+| Field | Layout Parser | Document OCR |
+|-------|---------------|--------------|
+| `document.text` | Empty | Full text |
+| `document.pages` | Empty | Pages with paragraphs |
+| `document.document_layout.blocks` | Hierarchical blocks | Empty |
+
+**Block hierarchy:** Headings contain nested paragraph blocks. Use `extract_blocks_recursively()` function to get all content.
+
+## Output JSON Structure
+
+```json
+{
+  "pdf_file": "...",
+  "stats": {
+    "top_level_blocks": 5,
+    "total_blocks_recursive": 150,
+    "block_type_counts": {"paragraph": 120, "heading-1": 5, ...}
+  },
+  "all_blocks": [
+    {"id": "1", "parent_id": null, "depth": 0, "type": "heading-1", "text": "..."},
+    {"id": "2", "parent_id": "1", "depth": 1, "type": "paragraph", "text": "..."}
+  ]
+}
+```
 
 ## Next Steps
 
-1. Run `docai_exploration.ipynb` on a test PDF
-2. Review `exploration_output.json` to see what data is available
-3. Decide which extraction path gives complete text:
-   - `document.text` (raw OCR)
-   - `document.pages.paragraphs` (page-structured)
-   - `document.document_layout.blocks` (layout-detected)
-4. Update extraction logic based on findings
+1. Run updated `docai_exploration.ipynb` on test PDF
+2. Verify recursive extraction captures all paragraph content
+3. If content is complete, start building extraction pipeline
+4. If content is still missing, investigate block structure further
 
 ## Repository
 
