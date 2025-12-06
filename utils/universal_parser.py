@@ -4,12 +4,10 @@ Recursively extracts structure, tables, and images into a hierarchical JSON tree
 """
 
 import os
-import json
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional
 from google.cloud import documentai_v1 as documentai
 from pdf2image import convert_from_path
 from PIL import Image
-import io
 
 class UniversalParser:
     """
@@ -78,8 +76,7 @@ class UniversalParser:
         
         return result
 
-    def _visit_block(self, block: documentai.Block, doc: documentai.Document, 
-                     page_images: List[Image.Image], pdf_path: str) -> Optional[Dict[str, Any]]:
+    def _visit_block(self, block, doc, page_images: List[Image.Image], pdf_path: str) -> Optional[Dict[str, Any]]:
         """
         Recursively processes a block and its children.
         """
@@ -120,8 +117,7 @@ class UniversalParser:
             node["type"] = "list"
             # List blocks often contain list items as children blocks (if nested) 
             # or we might need to look at text_block.blocks if defined there.
-            # However, Document AI often puts list_items as siblings or children.
-            # We will rely on the general recursion below.
+            # Document AI structure can vary, but we'll fall through to text block recursion below if present.
 
         # CASE D: TEXT & CONTAINERS (Headings, Paragraphs, Sections)
         if block.text_block:
@@ -129,7 +125,6 @@ class UniversalParser:
             
             # --- RECURSION ---
             # Layout Parser blocks can be nested. 
-            # e.g., A "Heading" block might contain "Paragraph" blocks if the model infers hierarchy.
             if block.text_block.blocks:
                 for child_block in block.text_block.blocks:
                     child_node = self._visit_block(child_block, doc, page_images, pdf_path)
@@ -140,7 +135,7 @@ class UniversalParser:
             
         return None # Skip empty/unknown blocks
 
-    def _get_block_type(self, block: documentai.Block) -> str:
+    def _get_block_type(self, block) -> str:
         """Determines the semantic type of the block."""
         if block.table_block:
             return "table"
@@ -154,7 +149,7 @@ class UniversalParser:
             
         return "unknown"
 
-    def _get_text(self, text_anchor: documentai.Document.TextAnchor, full_text: str) -> str:
+    def _get_text(self, text_anchor, full_text: str) -> str:
         """Extracts text from the document string using the anchor segments."""
         if not text_anchor or not text_anchor.text_segments:
             return ""
@@ -167,7 +162,7 @@ class UniversalParser:
             
         return extracted_text.strip()
 
-    def _extract_table_grid(self, table_block: documentai.Document.Page.Table, full_text: str) -> Dict[str, Any]:
+    def _extract_table_grid(self, table_block, full_text: str) -> Dict[str, Any]:
         """
         Reconstructs the table into a structured grid format.
         """
@@ -198,7 +193,7 @@ class UniversalParser:
             "simple_matrix": simple_matrix
         }
 
-    def _save_crop(self, block: documentai.Block, page_images: List[Image.Image], pdf_path: str) -> Optional[str]:
+    def _save_crop(self, block, page_images: List[Image.Image], pdf_path: str) -> Optional[str]:
         """
         Crops the region from the page image and saves it to disk.
         """
@@ -229,7 +224,6 @@ class UniversalParser:
             
             # Save
             filename = f"block_{block.block_id}.png"
-            # Sanitize filename if needed, but block_id is usually safe
             save_path = os.path.join(self.images_dir, filename)
             cropped_img.save(save_path)
             
@@ -239,12 +233,10 @@ class UniversalParser:
             print(f"Error saving crop for block {block.block_id}: {e}")
             return None
 
-    def _normalize_bbox(self, bbox: documentai.BoundingPoly) -> List[float]:
+    def _normalize_bbox(self, bbox) -> List[float]:
         """Returns [min_x, min_y, max_x, max_y] normalized coordinates."""
         if bbox.normalized_vertices:
             xs = [v.x for v in bbox.normalized_vertices]
             ys = [v.y for v in bbox.normalized_vertices]
             return [min(xs), min(ys), max(xs), max(ys)]
         return []
-
-
