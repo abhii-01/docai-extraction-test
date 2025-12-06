@@ -8,35 +8,30 @@ Testing Google Document AI Layout Parser for PDF text extraction. Goal is to ext
 
 **Date:** Dec 6, 2025
 
-**Latest Update:** Added recursive block extraction to handle Layout Parser's hierarchical response structure.
+**Latest Update:** Implemented `UniversalParser` class for robust, hierarchical extraction.
 
-Key findings:
-- Layout Parser returns `document.document_layout.blocks` (NOT `document.text` or `document.pages`)
-- Blocks are **hierarchical** - paragraphs are nested inside headings/sections
-- Initial extraction only got 5 top-level blocks (headings)
-- Recursive extraction now captures all nested content
+Key features added:
+- **Hierarchical Tree Output:** JSON structure mirrors document layout (Sections -> Children).
+- **Structured Table Extraction:** Tables preserved as 2D grids (rows/cols) with cell spans, not flattened text.
+- **Visual Content Extraction:** Images, charts, and diagrams are automatically cropped and saved to disk; file paths are linked in the JSON tree.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `docai_exploration.ipynb` | Main working notebook - run in Google Colab |
-| `archive/` | Old test notebooks (test1-5) for reference |
+| `test6_universal_parser.ipynb` | **NEW:** Tests the `UniversalParser` class |
+| `utils/universal_parser.py` | **NEW:** The core logic for hierarchical extraction |
 | `utils/` | Helper modules (docai_client, table_converter, vision_llm) |
 | `output/` | JSON results from extractions |
 
-## How to Run
+## How to Run the Universal Parser
 
-1. Open `docai_exploration.ipynb` in Google Colab
-2. Run Section 1 cells to set up:
-   - Install dependencies
-   - Upload credentials JSON
-   - Set project ID and processor ID
-   - Initialize client and verify
-   - Upload PDF
-3. Run Section 2 to process document
-4. Run Section 3 to explore what the API returns (includes recursive extraction)
-5. Run Section 4 to save and download results
+1. Open `test6_universal_parser.ipynb` in Google Colab.
+2. Run Setup cells (installs dependencies, clones repo).
+3. Upload credentials and test PDF.
+4. Run the parser.
+5. Download `universal_parsed_result.json` and `extracted_images.zip`.
 
 ## Required Configuration
 
@@ -60,29 +55,36 @@ The Layout Parser processor returns data differently than Document OCR:
 
 **Block hierarchy:** Headings contain nested paragraph blocks. Use `extract_blocks_recursively()` function to get all content.
 
-## Output JSON Structure
+## Output JSON Structure (Universal Parser)
 
 ```json
 {
-  "pdf_file": "...",
-  "stats": {
-    "top_level_blocks": 5,
-    "total_blocks_recursive": 150,
-    "block_type_counts": {"paragraph": 120, "heading-1": 5, ...}
-  },
-  "all_blocks": [
-    {"id": "1", "parent_id": null, "depth": 0, "type": "heading-1", "text": "..."},
-    {"id": "2", "parent_id": "1", "depth": 1, "type": "paragraph", "text": "..."}
+  "metadata": { ... },
+  "structure": [
+    {
+      "id": "block_1",
+      "type": "heading",
+      "text": "1. Introduction",
+      "children": [
+        {
+          "type": "paragraph",
+          "text": "This is the intro..."
+        },
+        {
+          "type": "table",
+          "data": { "simple_matrix": [["Header"], ["Value"]] }
+        }
+      ]
+    }
   ]
 }
 ```
 
 ## Immediate Next Steps
 
-1. Run updated `docai_exploration.ipynb` on test PDF
-2. Verify recursive extraction captures all paragraph content
-3. If content is complete, start building extraction pipeline
-4. If content is still missing, investigate block structure further
+1. Run `test6_universal_parser.ipynb` on your target PDFs.
+2. Verify table reconstruction accuracy.
+3. Verify image cropping quality.
 
 ---
 
@@ -115,4 +117,3 @@ The Layout Parser processor returns data differently than Document OCR:
 
 - Remote: `https://github.com/abhii-01/docai-extraction-test.git`
 - Branch: `main`
-
