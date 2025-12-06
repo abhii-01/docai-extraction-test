@@ -77,12 +77,39 @@ The Layout Parser processor returns data differently than Document OCR:
 }
 ```
 
-## Next Steps
+## Immediate Next Steps
 
 1. Run updated `docai_exploration.ipynb` on test PDF
 2. Verify recursive extraction captures all paragraph content
 3. If content is complete, start building extraction pipeline
 4. If content is still missing, investigate block structure further
+
+---
+
+## Improvement Plan (Strategic Roadmap)
+
+### 1. Extraction Quality
+- **Recursive Blocks:** Already implemented. Verify it captures arbitrary nesting depths.
+- **Context-Aware Chunking:** Tag each paragraph with its parent heading (e.g., "Section: Economics").
+- **Table Enhancement:** Use Layout Parser's `table_row`/`table_cell` structure to handle merged cells, not just raw text grids.
+
+### 2. Cost & Performance
+- **Selective Vision LLM:** Only send actual diagrams to GPT-4o, filter out decorative images.
+- **Token Limits:** Truncate large tables before LLM narrative conversion.
+- **Caching:** Store raw API responses to avoid re-calling API when changing parsing logic.
+
+### 3. Reliability
+- **Fallback:** If Layout Parser returns empty, try Document OCR or flag as "scanned PDF."
+- **Validation:** Pre-check PDFs (not encrypted, has pages, etc.) before processing.
+
+### 4. Maintainability
+- **Unified Document Class:** Abstract Google API specifics into a clean internal model.
+- **Golden Master Tests:** Keep a "blessed" output JSON for regression testing.
+
+### 5. Integration
+- **Schema Definition:** Create Pydantic model matching Taxonomy Tagger's expected input format.
+
+---
 
 ## Repository
 
