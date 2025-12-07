@@ -127,7 +127,8 @@ class UniversalParser:
         table_block = getattr(block, 'table_block', None)
         if table_block:
             node["type"] = "table"
-            node["data"] = self._extract_table_grid(table_block, full_text)
+            # Pass the full block to access child text blocks for spatial mapping
+            node["data"] = self._extract_table_grid(block, full_text)
             return node
 
         # CASE B: IMAGES / CHARTS
@@ -151,9 +152,15 @@ class UniversalParser:
 
         # CASE D: TEXT & CONTAINERS (Headings, Paragraphs, Sections)
         if text_block:
-            # Extract text using text_anchor
+            # Extract text: Priority 1: text_anchor (if full_text exists), Priority 2: text_block.text
             text_anchor = getattr(layout, 'text_anchor', None) if layout else None
-            node["text"] = self._get_text(text_anchor, full_text)
+            extracted_text = self._get_text(text_anchor, full_text)
+            
+            # Fallback to block.text_block.text if anchor extraction failed (e.g. empty full_text)
+            if not extracted_text:
+                extracted_text = getattr(text_block, 'text', "") or ""
+                
+            node["text"] = extracted_text.strip()
             
             # --- RECURSION ---
             # Layout Parser blocks can be nested inside text_block.blocks
@@ -189,7 +196,7 @@ class UniversalParser:
 
     def _get_text(self, text_anchor, full_text: str) -> str:
         """Extracts text from the document string using the anchor segments."""
-        if not text_anchor:
+        if not text_anchor or not full_text:
             return ""
         
         text_segments = getattr(text_anchor, 'text_segments', None) or []
@@ -205,10 +212,15 @@ class UniversalParser:
             
         return extracted_text.strip()
 
-    def _extract_table_grid(self, table_block, full_text: str) -> Dict[str, Any]:
+    def _extract_table_grid(self, block, full_text: str) -> Dict[str, Any]:
         """
         Reconstructs the table into a structured grid format.
+        Handles missing full_text by matching child blocks to cells spatially.
         """
+        table_block = getattr(block, 'table_block', None)
+        if not table_block:
+            return {"structured_rows": [], "simple_matrix": []}
+
         rows_data = []
         
         # Combine header and body rows safely
@@ -216,17 +228,47 @@ class UniversalParser:
         body_rows = list(getattr(table_block, 'body_rows', []) or [])
         all_rows = header_rows + body_rows
         
+        # Collect child text blocks for spatial mapping (fallback)
+        child_text_blocks = []
+        text_block = getattr(block, 'text_block', None)
+        if text_block:
+             child_text_blocks = getattr(text_block, 'blocks', []) or []
+
         for row in all_rows:
             row_cells = []
             cells = getattr(row, 'cells', []) or []
             for cell in cells:
-                # Get cell text via layout.text_anchor
+                cell_text = ""
                 cell_layout = getattr(cell, 'layout', None)
-                cell_text_anchor = getattr(cell_layout, 'text_anchor', None) if cell_layout else None
-                cell_text = self._get_text(cell_text_anchor, full_text)
                 
+                # Method 1: Try text anchor (Standard)
+                if full_text and cell_layout:
+                    cell_text_anchor = getattr(cell_layout, 'text_anchor', None)
+                    cell_text = self._get_text(cell_text_anchor, full_text)
+                
+                # Method 2: Spatial Mapping (Fallback if full_text is empty)
+                # If standard extraction failed and we have child blocks, try to find blocks inside this cell
+                if not cell_text and child_text_blocks and cell_layout:
+                    cell_bbox = getattr(cell_layout, 'bounding_poly', None)
+                    if cell_bbox:
+                        matched_texts = []
+                        cell_rect = self._normalize_bbox(cell_bbox) # [x0, y0, x1, y1]
+                        
+                        for child in child_text_blocks:
+                            # Check if child is contained in cell
+                            child_layout = getattr(child, 'layout', None)
+                            if child_layout and getattr(child_layout, 'bounding_poly', None):
+                                child_rect = self._normalize_bbox(child_layout.bounding_poly)
+                                if self._is_contained(child_rect, cell_rect):
+                                    # Get text from child block directly
+                                    child_tb = getattr(child, 'text_block', None)
+                                    if child_tb and getattr(child_tb, 'text', ''):
+                                        matched_texts.append(child_tb.text)
+                        
+                        cell_text = " ".join(matched_texts)
+
                 cell_info = {
-                    "text": cell_text,
+                    "text": cell_text.strip(),
                     "row_span": getattr(cell, 'row_span', 1) or 1,
                     "col_span": getattr(cell, 'col_span', 1) or 1
                 }
@@ -242,6 +284,21 @@ class UniversalParser:
             "structured_rows": rows_data,
             "simple_matrix": simple_matrix
         }
+
+    def _is_contained(self, inner_rect: List[float], outer_rect: List[float]) -> bool:
+        """Check if inner_rect is mostly contained within outer_rect."""
+        if not inner_rect or not outer_rect:
+            return False
+        
+        # Simple containment: center of inner is inside outer
+        ix0, iy0, ix1, iy1 = inner_rect
+        ox0, oy0, ox1, oy1 = outer_rect
+        
+        cx = (ix0 + ix1) / 2
+        cy = (iy0 + iy1) / 2
+        
+        return (ox0 <= cx <= ox1) and (oy0 <= cy <= oy1)
+
 
     def _save_crop(self, block, page_images: List[Image.Image]) -> Optional[str]:
         """
