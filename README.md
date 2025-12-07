@@ -20,12 +20,14 @@ Testing Google Document AI Layout Parser for extracting structured content (para
 ```
 docai-test/
 ├── README.md                          # This file - full project context
+├── ENHANCEMENT_ROADMAP.md             # Future features with code snippets
+├── TABLE_TEXT_BUG.md                  # Known bug: table text not extracting
 ├── env_template.txt                   # Configuration template
 ├── download_test_samples.py           # Download sample PDFs for testing
 │
 ├── Notebooks:
-│   ├── docai_exploration.ipynb        # Main working notebook (run in Colab)
-│   └── test6_universal_parser.ipynb   # Tests UniversalParser class
+│   ├── docai_exploration.ipynb        # Debug/exploration notebook (run in Colab)
+│   └── test6_universal_parser.ipynb   # Production parser test (recommended)
 │
 ├── utils/
 │   ├── universal_parser.py            # Core hierarchical extraction logic

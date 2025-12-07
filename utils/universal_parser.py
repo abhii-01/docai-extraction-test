@@ -232,7 +232,7 @@ class UniversalParser:
         child_text_blocks = []
         text_block = getattr(block, 'text_block', None)
         if text_block:
-             child_text_blocks = getattr(text_block, 'blocks', []) or []
+            child_text_blocks = getattr(text_block, 'blocks', []) or []
 
         for row in all_rows:
             row_cells = []
@@ -287,7 +287,10 @@ class UniversalParser:
 
     def _is_contained(self, inner_rect: List[float], outer_rect: List[float]) -> bool:
         """Check if inner_rect is mostly contained within outer_rect."""
+        # Validate both rects have exactly 4 coordinates [x0, y0, x1, y1]
         if not inner_rect or not outer_rect:
+            return False
+        if len(inner_rect) != 4 or len(outer_rect) != 4:
             return False
         
         # Simple containment: center of inner is inside outer
