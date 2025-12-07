@@ -227,12 +227,6 @@ class UniversalParser:
         header_rows = list(getattr(table_block, 'header_rows', []) or [])
         body_rows = list(getattr(table_block, 'body_rows', []) or [])
         all_rows = header_rows + body_rows
-        
-        # Collect child text blocks for spatial mapping (fallback)
-        child_text_blocks = []
-        text_block = getattr(block, 'text_block', None)
-        if text_block:
-            child_text_blocks = getattr(text_block, 'blocks', []) or []
 
         for row in all_rows:
             row_cells = []
@@ -241,31 +235,23 @@ class UniversalParser:
                 cell_text = ""
                 cell_layout = getattr(cell, 'layout', None)
                 
-                # Method 1: Try text anchor (Standard)
+                # Method 1: Try text anchor (works when document.text is populated)
                 if full_text and cell_layout:
                     cell_text_anchor = getattr(cell_layout, 'text_anchor', None)
                     cell_text = self._get_text(cell_text_anchor, full_text)
                 
-                # Method 2: Spatial Mapping (Fallback if full_text is empty)
-                # If standard extraction failed and we have child blocks, try to find blocks inside this cell
-                if not cell_text and child_text_blocks and cell_layout:
-                    cell_bbox = getattr(cell_layout, 'bounding_poly', None)
-                    if cell_bbox:
-                        matched_texts = []
-                        cell_rect = self._normalize_bbox(cell_bbox) # [x0, y0, x1, y1]
-                        
-                        for child in child_text_blocks:
-                            # Check if child is contained in cell
-                            child_layout = getattr(child, 'layout', None)
-                            if child_layout and getattr(child_layout, 'bounding_poly', None):
-                                child_rect = self._normalize_bbox(child_layout.bounding_poly)
-                                if self._is_contained(child_rect, cell_rect):
-                                    # Get text from child block directly
-                                    child_tb = getattr(child, 'text_block', None)
-                                    if child_tb and getattr(child_tb, 'text', ''):
-                                        matched_texts.append(child_tb.text)
-                        
-                        cell_text = " ".join(matched_texts)
+                # Method 2: Direct cell.blocks extraction (Layout Parser stores text here)
+                # Layout Parser returns empty document.text and stores cell content in cell.blocks[].text_block.text
+                if not cell_text:
+                    cell_blocks = list(getattr(cell, 'blocks', []) or [])
+                    block_texts = []
+                    for child_block in cell_blocks:
+                        child_tb = getattr(child_block, 'text_block', None)
+                        if child_tb:
+                            text = getattr(child_tb, 'text', '') or ''
+                            if text:
+                                block_texts.append(text.strip())
+                    cell_text = " ".join(block_texts)
 
                 cell_info = {
                     "text": cell_text.strip(),
