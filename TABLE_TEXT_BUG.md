@@ -1,180 +1,126 @@
 # Table Text Extraction Bug
 
-## Status: 🔴 UNRESOLVED
-
-## Problem Summary
-
-Tables are being **detected** by Document AI Layout Parser, but the **text content inside table cells is not being extracted**.
-
-### Evidence
-
-**From `docai_exploration.ipynb`:**
-```
-TABLES
-============================================================
-Total tables found: 0
-```
-(Even after fix to check `document.document_layout.blocks`, tables may still show 0 if they're nested)
-
-**From `test6_universal_parser.ipynb` (`universal_parsed_result.json`):**
-- Tables ARE detected (5 tables found with structure)
-- But `simple_matrix` contains empty strings:
-```json
-{
-  "type": "table",
-  "data": {
-    "simple_matrix": [
-      ["", "", ""],
-      ["", "", ""]
-    ]
-  }
-}
-```
+## Status: 🟢 RESOLVED (Dec 8, 2025)
 
 ---
 
-## Root Cause Analysis
+## TL;DR
 
-### Why `document.text` is Empty
-
-The Layout Parser processor returns text in a **different location** than expected:
-- **Expected:** `document.text` contains all OCR text, and `text_anchor` indices point into it
-- **Actual:** `document.text` is **empty** (0 characters), but text exists in `block.text_block.text`
-
-### Why Table Cells Have No Text
-
-1. **Standard Method Failed:** 
-   - `_extract_table_grid()` tries to use `cell.layout.text_anchor` to get text from `document.text`
-   - Since `document.text` is empty, this returns nothing
-
-2. **Fallback Method (Spatial Matching) - Attempted but Unclear if Working:**
-   - Added fallback to find child `text_block.blocks` inside table cells by bounding box
-   - **Problem:** Table blocks may not have `text_block.blocks` children - the text might be stored differently
+| Issue | Table cells detected but text was empty |
+|-------|----------------------------------------|
+| Root Cause | Code looked for text in `cell.layout.text_anchor` but Layout Parser stores it in `cell.blocks[].text_block.text` |
+| Fix | Read text from `cell.blocks` instead |
+| Commit | `2f3231e` on `main` |
 
 ---
 
-## What Was Attempted
+## The Problem
 
-### Attempt 1: Text Fallback in `_visit_block()`
-**File:** `utils/universal_parser.py`
+Layout Parser returns:
+- `document.text` = **empty** (0 chars)
+- `cell.layout` = **None**
+- `cell.blocks[].text_block.text` = **actual text** ✅
+
+Old code tried Method 1 (text_anchor) which failed because `document.text` is empty.
+
+---
+
+## The Fix
+
+**File:** `utils/universal_parser.py` → `_extract_table_grid()`
 
 ```python
-# In _visit_block(), for text blocks:
-extracted_text = self._get_text(text_anchor, full_text)
-
-# Fallback to block.text_block.text if anchor extraction failed
-if not extracted_text:
-    extracted_text = getattr(text_block, 'text', "") or ""
+# Method 2: Direct cell.blocks extraction (THE FIX)
+if not cell_text:
+    cell_blocks = list(getattr(cell, 'blocks', []) or [])
+    block_texts = []
+    for child_block in cell_blocks:
+        child_tb = getattr(child_block, 'text_block', None)
+        if child_tb:
+            text = getattr(child_tb, 'text', '') or ''
+            if text:
+                block_texts.append(text.strip())
+    cell_text = " ".join(block_texts)
 ```
-
-**Result:** ✅ Works for paragraphs/headings, ❌ Does NOT help tables
-
-### Attempt 2: Spatial Matching for Table Cells
-**File:** `utils/universal_parser.py`
-
-```python
-# In _extract_table_grid(), if standard extraction fails:
-if not cell_text and child_text_blocks and cell_layout:
-    cell_bbox = getattr(cell_layout, 'bounding_poly', None)
-    if cell_bbox:
-        cell_rect = self._normalize_bbox(cell_bbox)
-        for child in child_text_blocks:
-            child_rect = self._normalize_bbox(child_layout.bounding_poly)
-            if self._is_contained(child_rect, cell_rect):
-                matched_texts.append(child_tb.text)
-        cell_text = " ".join(matched_texts)
-```
-
-**Result:** ❌ Not working - likely because `block.text_block.blocks` is empty for table blocks
-
-### Attempt 3: Updated Table Detection in `docai_exploration.ipynb`
-**Cell 35:** Added check for `document.document_layout.blocks` with `table_block` attribute
-
-**Result:** ⚠️ Partially helps detection count, but doesn't solve text extraction
 
 ---
 
-## Hypotheses to Investigate
+## Key Insight: Layout Parser vs Form Parser
 
-### Hypothesis 1: Table Text is in Different Location
-The text for table cells might be stored in:
-- `table_block.body_rows[].cells[].blocks[]` (nested blocks inside cells)
-- A separate text layer not connected to the table structure
-- Only in `document.text` for **non-Layout Parser** processors (Form Parser, OCR)
+| Processor | `document.text` | Text Location |
+|-----------|-----------------|---------------|
+| **Form Parser / OCR** | Populated | `text_anchor` points into `document.text` |
+| **Layout Parser** | **Empty** | Text stored hierarchically in `block.text_block.text` |
 
-### Hypothesis 2: Layout Parser Doesn't Extract Table Text
-The Layout Parser might be designed for **structure detection** only, and a different processor (Form Parser) is needed for table content extraction.
-
-### Hypothesis 3: Need to Use `page.tables` Instead
-For table text, might need to use the legacy `document.pages[].tables[]` structure instead of `document.document_layout.blocks[]`.
+Layout Parser is designed for **hierarchical structure**, not flat text extraction. This is intentional, not a bug.
 
 ---
 
-## Next Steps to Debug
+## Debug Code (For Future Issues)
 
-### Step 1: Raw API Inspection
-Add this debug code to `docai_exploration.ipynb` to inspect table block structure:
+Run this in notebook to inspect raw table structure:
 
 ```python
-# Find table blocks and inspect their full structure
-for block in doc_layout.blocks:
+raw_doc = parser.client.process_document(pdf_filename)
+print(f"document.text length: {len(raw_doc.text)}")
+
+for block in raw_doc.document_layout.blocks:
     if hasattr(block, 'table_block') and block.table_block:
-        print(f"Table Block ID: {block.block_id}")
-        print(f"  Has text_block: {hasattr(block, 'text_block') and block.text_block is not None}")
-        
         tb = block.table_block
-        print(f"  Header rows: {len(tb.header_rows) if tb.header_rows else 0}")
-        print(f"  Body rows: {len(tb.body_rows) if tb.body_rows else 0}")
-        
-        # Inspect first cell
-        if tb.body_rows:
-            first_row = tb.body_rows[0]
-            if first_row.cells:
-                cell = first_row.cells[0]
-                print(f"  First cell attributes: {[a for a in dir(cell) if not a.startswith('_')]}")
-                if hasattr(cell, 'layout') and cell.layout:
-                    print(f"    Cell layout.text_anchor: {cell.layout.text_anchor}")
-                if hasattr(cell, 'blocks') and cell.blocks:
-                    print(f"    Cell has nested blocks: {len(cell.blocks)}")
-```
-
-### Step 2: Try Form Parser
-Test with a **Form Parser** processor instead of Layout Parser to see if table text extraction works differently.
-
-### Step 3: Check `page.tables` Structure
-```python
-# Check if page-level tables have text
-if document.pages:
-    for page in document.pages:
-        if page.tables:
-            for table in page.tables:
-                # Check header rows
-                for row in (table.header_rows or []):
-                    for cell in (row.cells or []):
-                        # Try to get text from cell
-                        if cell.layout and cell.layout.text_anchor:
-                            # This needs document.text to work
-                            pass
+        row = tb.body_rows[0] if tb.body_rows else None
+        if row and row.cells:
+            cell = row.cells[0]
+            print(f"cell.layout: {getattr(cell, 'layout', None)}")
+            print(f"cell.blocks: {list(getattr(cell, 'blocks', []))}")
+            for child in getattr(cell, 'blocks', []):
+                print(f"  -> text: {getattr(child.text_block, 'text', '')}")
+        break
 ```
 
 ---
 
-## Files Modified (For Reference)
+## Caveats & Gotchas
 
-| File | Changes Made |
-|------|--------------|
-| `utils/universal_parser.py` | Added text fallback, spatial matching for tables, `_is_contained()` method |
-| `docai_exploration.ipynb` | Updated Cell 35 to check `document.document_layout.blocks` for tables |
+### 1. Colab Caching Issue
+**Problem:** Colab caches `utils/` folder. Even after GitHub update, old code runs.
+
+**Solution:** Force re-clone before running:
+```python
+!rm -rf utils temp_repo
+!git clone https://github.com/abhii-01/docai-extraction-test.git temp_repo
+!mv temp_repo/utils .
+!rm -rf temp_repo
+```
+
+Then: **Runtime → Restart runtime**
+
+### 2. Other Processors Behave Differently
+- **Form Parser:** `document.text` populated, `text_anchor` works
+- **Layout Parser:** `document.text` empty, use `block.text_block.text`
+
+Don't assume one processor's behavior applies to others.
+
+### 3. Cell Structure
+Table cells have:
+- `cell.blocks[]` - nested content blocks (paragraphs inside cell)
+- `cell.row_span`, `cell.col_span` - merge info
+- `cell.layout` - **often None** for Layout Parser
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `utils/universal_parser.py` | Added `cell.blocks` extraction in `_extract_table_grid()` |
 
 ---
 
 ## Related Links
 
-- [Document AI Layout Parser Docs](https://cloud.google.com/document-ai/docs/processors-list#processor_layout-parser)
-- [Document AI Table Extraction](https://cloud.google.com/document-ai/docs/handle-response#tables)
-- Enhancement Roadmap: `ENHANCEMENT_ROADMAP.md` (Enhancement #11: Extraction Diagnosis)
+- [Layout Parser Docs](https://cloud.google.com/document-ai/docs/processors-list#processor_layout-parser)
+- [Table Extraction Guide](https://cloud.google.com/document-ai/docs/handle-response#tables)
 
 ---
 
-*Last Updated: Dec 7, 2025*
-
+*Resolved: Dec 8, 2025*
