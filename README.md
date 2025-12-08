@@ -21,7 +21,6 @@ Testing Google Document AI Layout Parser for extracting structured content (para
 docai-test/
 ├── README.md                          # This file - full project context
 ├── ENHANCEMENT_ROADMAP.md             # Future features with code snippets
-├── TABLE_TEXT_BUG.md                  # Known bug: table text not extracting
 ├── env_template.txt                   # Configuration template
 ├── download_test_samples.py           # Download sample PDFs for testing
 │
@@ -127,6 +126,44 @@ The Layout Parser processor returns data differently:
 | `document.document_layout.blocks` | **Hierarchical blocks** | Empty |
 
 **Key Insight:** Headings contain nested paragraph blocks. Use `extract_blocks_recursively()` to traverse.
+
+---
+
+## ⚠️ Table Text Extraction (Critical Caveat)
+
+### The Issue (Resolved Dec 2025)
+Layout Parser stores table cell text **differently** than expected:
+
+| Location | What's There |
+|----------|--------------|
+| `cell.layout.text_anchor` | ❌ **None** (doesn't work) |
+| `cell.blocks[].text_block.text` | ✅ **Actual text** |
+
+### Why This Happens
+- Layout Parser returns `document.text` as **empty** (0 chars)
+- Text is stored hierarchically in block structures, not in a flat text field
+- This is **intentional behavior**, not a bug
+
+### The Fix (Already Applied)
+`_extract_table_grid()` in `universal_parser.py` reads from `cell.blocks`:
+
+```python
+cell_blocks = list(getattr(cell, 'blocks', []) or [])
+for child_block in cell_blocks:
+    text = getattr(child_block.text_block, 'text', '')
+    # ... extract text
+```
+
+### Colab Caching Gotcha
+If table text is empty after pulling updates, Colab cached the old `utils/`:
+
+```python
+# Force re-clone in Colab
+!rm -rf utils temp_repo
+!git clone https://github.com/abhii-01/docai-extraction-test.git temp_repo
+!mv temp_repo/utils . && rm -rf temp_repo
+# Then: Runtime → Restart runtime
+```
 
 ---
 
