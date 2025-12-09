@@ -26,7 +26,7 @@ docai-test/
 │
 ├── Notebooks:
 │   ├── docai_exploration.ipynb        # Debug/exploration notebook (run in Colab)
-│   └── test6_universal_parser.ipynb   # Production parser test (recommended)
+│   └── universal_parser.ipynb         # Production parser test (recommended)
 │
 ├── utils/
 │   ├── universal_parser.py            # Core hierarchical extraction logic
@@ -56,7 +56,7 @@ docai-test/
 1. Go to [Google Colab](https://colab.research.google.com/)
 2. File → Open Notebook → GitHub
 3. Enter: `abhii-01/docai-extraction-test`
-4. Select `test6_universal_parser.ipynb`
+4. Select `universal_parser.ipynb`
 
 **Option B - Upload:**
 1. Download notebook from this repo
@@ -287,7 +287,7 @@ The `archive/` folder contains previous iteration notebooks:
 | `test4_flowchart_detection.ipynb` | Diagram description with Vision LLM |
 | `test5_full_pipeline.ipynb` | Combined pipeline |
 
-These were superseded by `test6_universal_parser.ipynb` which uses the improved `UniversalParser` class.
+These were superseded by `universal_parser.ipynb` which uses the improved `UniversalParser` class.
 
 ---
 
