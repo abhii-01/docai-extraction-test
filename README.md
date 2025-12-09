@@ -4,6 +4,8 @@ Extract structured content (paragraphs, tables, diagrams) from PDFs using Google
 
 **Purpose:** Feed extracted content to Taxonomy Tagger for classification.
 
+> **Git Push Note:** Always use `git push --no-verify` to skip pre-push hooks.
+
 ---
 
 ## Repository Structure
