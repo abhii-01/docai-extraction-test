@@ -2,7 +2,7 @@
 
 > **Purpose:** This file summarizes the image detection problem and solution attempts. Use this as context for continuing the task.
 > 
-> **Last Updated:** Dec 11, 2024
+> **Last Updated:** Dec 11, 2024 (Session 2)
 
 ---
 
@@ -11,10 +11,22 @@
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Embedded images (photos, scans) | ✅ Working | PyMuPDF extracts with exact boundaries |
-| Vector graphics (charts, diagrams) | ⚠️ Partial | LayoutParser has Colab compatibility issues |
+| Vector graphics (charts, diagrams) | ❌ Blocked | LayoutParser/Detectron2 fails in Colab |
 | Image descriptions | ✅ Working | GPT-4o describes extracted images |
 | Standalone pipeline | ✅ Created | `image_extractor.ipynb` |
 | Merge with universal_parser | ⏳ Pending | To be implemented |
+
+### What Works Right Now
+```python
+extractor = ImageExtractor(
+    use_layoutparser=False,      # ← Must be False (Detectron2 broken)
+    generate_descriptions=True   # ← Works with OpenAI API key
+)
+```
+- ✅ Extracts all embedded images (JPG/PNG/etc stored in PDF)
+- ✅ Gets exact bounding boxes from PDF metadata
+- ✅ Generates descriptions via GPT-4o
+- ❌ Cannot detect vector charts/infographics (needs LayoutParser)
 
 ---
 
@@ -227,7 +239,14 @@ Cell 17 provides:
 
 ## Changelog
 
-### Dec 11, 2024
+### Dec 11, 2024 (Session 2)
+- Tested `image_extractor.ipynb` with `test_doc_ai (2).pdf`
+- LayoutParser/Detectron2 still fails in Colab (Python 3.12 compatibility)
+- Tried multiple Detectron2 installation methods - all failed
+- **PyMuPDF extraction confirmed working** - extracts embedded images correctly
+- Recommendation: Use `use_layoutparser=False` until Detectron2 is fixed
+
+### Dec 11, 2024 (Session 1)
 - Tested Option C (recursive inspection) - FAILED
 - Implemented Option D (pdf2image + Vision)
 - Discovered GPT-4o bbox estimation is inaccurate
