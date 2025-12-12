@@ -1,119 +1,128 @@
-# Image Detection & JSON Insertion Task
+# Image Detection & Extraction Task
 
-> **Purpose:** This file summarizes the image detection problem and solution attempts. Use this as context for continuing the task.
-> 
-> **Last Updated:** Dec 11, 2024 (Session 2)
+> **Status:** ✅ COMPLETED  
+> **Last Updated:** Dec 12, 2025
 
 ---
 
-## Current Status: ✅ PARTIALLY SOLVED
+## Summary
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Embedded images (photos, scans) | ✅ Working | PyMuPDF extracts with exact boundaries |
-| Vector graphics (charts, diagrams) | ❌ Blocked | LayoutParser/Detectron2 fails in Colab |
-| Image descriptions | ✅ Working | GPT-4o describes extracted images |
-| Standalone pipeline | ✅ Created | `image_extractor.ipynb` |
-| Merge with universal_parser | ⏳ Pending | To be implemented |
+Implemented a two-tier image extraction pipeline in `image_extractor.ipynb` that detects **both** embedded raster images and vector figures from PDFs.
 
-### What Works Right Now
+| Tier | Tool | What It Detects | Status |
+|------|------|-----------------|--------|
+| **1** | PyMuPDF | Embedded images (JPG/PNG stored in PDF) | ✅ Working |
+| **2** | PaddleOCR PP-Structure | Vector figures (charts, diagrams, flowcharts) | ✅ Working |
+| **3** | GPT-4o Vision | Image descriptions | ✅ Working |
+
+---
+
+## Why Two Tiers?
+
+**PyMuPDF** and **PaddleOCR** detect fundamentally different things:
+
+| Aspect | PyMuPDF | PaddleOCR |
+|--------|---------|-----------|
+| **How it works** | Extracts actual image files stored inside PDF | Renders page as screenshot, uses ML to find figures |
+| **Detects** | Photos, scans, logos (embedded files) | Charts, diagrams, flowcharts (vector graphics) |
+| **Quality** | Original quality | Limited by render DPI (150) |
+| **Speed** | Very fast (no ML) | Slower (~2-3s per page) |
+| **Misses** | Vector graphics (drawn with lines) | Nothing, but may have false positives |
+
+**Both are needed** - PyMuPDF gives original quality for embedded images, PaddleOCR catches everything else.
+
+---
+
+## Implementation
+
+### Files
+| File | Purpose |
+|------|---------|
+| `image_extractor.ipynb` | Main extraction pipeline (run in Colab) |
+| `universal_parser.ipynb` | Text/table extraction - DO NOT TOUCH |
+
+### Dependencies (Cell 2)
 ```python
-extractor = ImageExtractor(
-    use_layoutparser=False,      # ← Must be False (Detectron2 broken)
-    generate_descriptions=True   # ← Works with OpenAI API key
-)
+%pip install -q pymupdf pdf2image openai Pillow
+%pip install -q "numpy<2.0" paddlepaddle==2.6.2 paddleocr==2.8.1
 ```
-- ✅ Extracts all embedded images (JPG/PNG/etc stored in PDF)
-- ✅ Gets exact bounding boxes from PDF metadata
-- ✅ Generates descriptions via GPT-4o
-- ❌ Cannot detect vector charts/infographics (needs LayoutParser)
+
+### Pipeline Flow
+1. **PyMuPDF** extracts embedded images with bounding boxes
+2. **PaddleOCR** renders pages and detects figure regions
+3. **Deduplication** removes overlaps (IoU > 0.5)
+4. **GPT-4o Vision** generates descriptions for unique images
 
 ---
 
-## Problem Statement
+## Key Caveats & Fixes
 
-**Goal:** Detect images/diagrams in PDFs, extract them, send to Vision LLM, and insert the LLM description back into the JSON at the correct position.
+### 1. PaddleOCR Version Pinning (CRITICAL)
+```python
+# ❌ DON'T USE (broken)
+%pip install paddleocr
 
-**Original Issue:** Google Doc AI Layout Parser does NOT detect images. They get OCR'd as text fragments instead.
+# ✅ USE THIS (stable)
+%pip install -q "numpy<2.0" paddlepaddle==2.6.2 paddleocr==2.8.1
+```
+
+**Why:** PaddleOCR 3.x has PaddleX dependency with singleton initialization issues. Version 2.8.1 is stable.
+
+### 2. NumPy Compatibility
+```python
+%pip install -q "numpy<2.0"
+```
+
+**Why:** PaddlePaddle 2.6.2 requires NumPy 1.x. NumPy 2.0 breaks with `ModuleNotFoundError: No module named 'numpy.strings'`.
+
+### 3. Colab Runtime Restart
+After installing dependencies in Cell 2, **restart the runtime** before running other cells.
+
+### 4. Poppler Requirement
+`pdf2image` requires `poppler-utils` system package:
+```python
+# Installed automatically in Colab
+!apt-get install -y -qq poppler-utils
+```
 
 ---
 
-## Solution Journey
+## Tested Results
 
-### Option C: Recursive Block Inspection - ❌ FAILED
+### Test 1: PDF with Embedded Images
+- PyMuPDF: 7 images ✅
+- PaddleOCR: 0 figures (correct - no vector graphics)
 
-**Tested:** Dec 11, 2024
-
-Added comprehensive debug cell to `universal_parser.ipynb` (Cell 17) that recursively inspects all 400 blocks across 3 nesting levels.
-
-**Result:**
-```
-🎯 IMAGE_BLOCK found: 0
-🎯 Visual-type blocks found: 0
-Blocks with valid bbox: 0/400
-```
-
-**Conclusion:** Layout Parser genuinely does NOT detect images at any level. Moving to Option D.
+### Test 2: PDF with Vector Charts Only
+- PyMuPDF: 0 images (correct - no embedded files)
+- PaddleOCR: 4 figures ✅ (bar chart, flowchart, pie chart, line chart)
 
 ---
 
-### Option D: pdf2image + Vision LLM - ⚠️ EVOLVED
+## What Was Tried & Failed
 
-**Initial Attempt:** Send full page to GPT-4o, ask it to return bounding boxes.
-
-**Problem:** GPT-4o's bounding box estimates were inaccurate — crops cut images incorrectly, losing information.
-
-**Revised Approach:** Hybrid detection pipeline:
-1. **PyMuPDF** - Extract embedded images (exact boundaries, FREE)
-2. **LayoutParser** - Detect figure regions (vector charts, FREE)
-3. **GPT-4o** - Describe ONLY extracted images (cost-efficient)
+| Approach | Issue |
+|----------|-------|
+| **Surya** | `ModuleNotFoundError: No module named 'surya.model'` - API broke between versions |
+| **LayoutParser/Detectron2** | Broken on Python 3.12, complex CUDA dependencies |
+| **PaddleOCR 3.x** | `RuntimeError: PDX has already been initialized` - singleton pattern issue |
+| **NumPy 2.0** | `ModuleNotFoundError: No module named 'numpy.strings'` with PaddlePaddle |
 
 ---
 
-## Current Implementation
-
-### New File: `image_extractor.ipynb`
-
-Standalone notebook with hybrid detection:
-
-```
-PDF
- │
- ├─→ PyMuPDF ─────────────→ Embedded images (exact boundaries)
- │
- ├─→ LayoutParser ────────→ Figure regions (vector charts)
- │
- └─→ Deduplicate ─────────→ Remove overlapping duplicates
-          │
-          ↓
-      GPT-4o Vision ────────→ Descriptions (per image, not per page)
-          │
-          ↓
-      image_extractions.json
-```
-
-### Key Features
-
-| Feature | Description |
-|---------|-------------|
-| PyMuPDF extraction | Extracts actual embedded images with exact coordinates |
-| LayoutParser detection | Detects "Figure" type regions (requires Detectron2) |
-| Deduplication | Removes duplicates with >50% IoU overlap |
-| Cost-efficient LLM | Only sends extracted images, not full pages |
-| Configurable | Can disable LayoutParser or descriptions |
-
-### Output JSON Structure
+## Output JSON Structure
 
 ```json
 {
   "metadata": {
     "source_file": "document.pdf",
     "page_count": 10,
-    "images_found": 5,
-    "methods_used": {
-      "pymupdf": true,
-      "layoutparser": false,
-      "descriptions": true
+    "images_found": 7,
+    "methods_used": { "pymupdf": true, "paddleocr": true, "descriptions": true },
+    "stats": {
+      "pymupdf_images": 4,
+      "paddleocr_figures": 5,
+      "duplicates_removed": 2
     }
   },
   "images": [
@@ -124,7 +133,7 @@ PDF
       "source": "pymupdf",
       "bbox": [0.1, 0.2, 0.6, 0.8],
       "file_path": "image_output/images/page1_img_001.png",
-      "description": "Bar chart showing GDP growth 2010-2024"
+      "description": "Photograph of laboratory equipment"
     }
   ]
 }
@@ -132,125 +141,18 @@ PDF
 
 ---
 
-## Known Issues
+## Quick Start
 
-### LayoutParser/Detectron2 in Colab
-
-**Problem:** LayoutParser requires Detectron2, which has compatibility issues with Colab's Python 3.12 environment.
-
-**Error:**
-```
-⚠️ Could not load LayoutParser model: module layoutparser has no attribute Detectron2LayoutModel
-```
-
-**Workaround:** Set `use_layoutparser=False` — PyMuPDF still extracts embedded images.
-
-**Impact:** Without LayoutParser, vector graphics (charts made with shapes/lines) may be missed. Only actual embedded images (JPG/PNG stored in PDF) are extracted.
+1. Open `image_extractor.ipynb` in [Google Colab](https://colab.research.google.com/)
+2. Run Cell 2 (dependencies) → **Restart runtime**
+3. Set `OPENAI_API_KEY` in Cell 3
+4. Upload PDF in Cell 4
+5. Run remaining cells
 
 ---
 
-## Files Reference
+## Related
 
-| File | Purpose |
-|------|---------|
-| `image_extractor.ipynb` | **NEW** - Standalone image extraction pipeline |
-| `universal_parser.ipynb` | Text extraction (contains debug cells 10-17) |
-| `utils/universal_parser.py` | Core text parsing logic |
-| `utils/vision_llm.py` | Vision LLM integration |
-
----
-
-## Priority Order for Future Work
-
-1. ~~**Option C** - Recursive block inspection~~ ❌ Tested, failed
-2. **Option D** - PyMuPDF + LayoutParser ✅ Implemented (LayoutParser has issues)
-3. **Option B** - Hybrid with Enterprise OCR (if needed, costs more)
-
----
-
-## Next Steps
-
-### Immediate
-1. **Fix LayoutParser** - Try alternative detection models or wait for Colab update
-2. **Test with more PDFs** - Verify PyMuPDF extraction works consistently
-
-### Future
-1. **Merge pipelines** - Combine `image_extractor.ipynb` output with `universal_parser.ipynb` output
-2. **Position matching** - Insert images at correct positions in document structure (currently page-level only)
-
----
-
-## Configuration
-
-### image_extractor.ipynb
-
-```python
-extractor = ImageExtractor(
-    output_dir="image_output",
-    use_layoutparser=False,      # Disable if Detectron2 fails
-    generate_descriptions=True   # Set False to skip LLM costs
-)
-```
-
-### universal_parser.ipynb
-
-```python
-DOCAI_PROJECT_ID = "vudr0311"
-DOCAI_PROCESSOR_ID = "91f4e596a0b1c39d"  # Layout Parser
-DOCAI_LOCATION = "us"
-```
-
----
-
-## Related Context
-
-- **Repository:** `/Users/aadarsh/Documents/code/docai-test`
-- **GitHub:** https://github.com/abhii-01/docai-extraction-test
-- **Downstream Consumer:** Taxonomy Tagger at `/Users/aadarsh/Documents/code/llm syllabus portal`
-- **Git Push:** Always use `git push --no-verify`
-
----
-
-## Debug Cells in universal_parser.ipynb
-
-| Cell | Purpose |
-|------|---------|
-| Cell 10-16 | Original debug cells for inspecting Document AI response |
-| Cell 17 | **NEW** - Comprehensive image detection diagnosis |
-
-Cell 17 provides:
-- Basic document stats
-- Sample block attributes
-- Recursive block inspection (Option C test)
-- Pages array check
-- Image indicators in text
-- Summary with recommendation
-
----
-
-## Cost Analysis
-
-| Approach | What Goes to LLM | Cost (10-page PDF) |
-|----------|-----------------|-------------------|
-| Old (full page to GPT-4o) | Every page | ~$0.30 |
-| New (images only) | Only 5 images | ~$0.05 |
-
----
-
-## Changelog
-
-### Dec 11, 2024 (Session 2)
-- Tested `image_extractor.ipynb` with `test_doc_ai (2).pdf`
-- LayoutParser/Detectron2 still fails in Colab (Python 3.12 compatibility)
-- Tried multiple Detectron2 installation methods - all failed
-- **PyMuPDF extraction confirmed working** - extracts embedded images correctly
-- Recommendation: Use `use_layoutparser=False` until Detectron2 is fixed
-
-### Dec 11, 2024 (Session 1)
-- Tested Option C (recursive inspection) - FAILED
-- Implemented Option D (pdf2image + Vision)
-- Discovered GPT-4o bbox estimation is inaccurate
-- Pivoted to PyMuPDF + LayoutParser hybrid approach
-- Created `image_extractor.ipynb`
-- Encountered LayoutParser/Detectron2 Colab compatibility issues
-- Documented current state and next steps
+- **Repository:** https://github.com/abhii-01/docai-extraction-test
+- **Git push:** Always use `git push --no-verify`
+- **Text/Tables:** Handled by `universal_parser.ipynb` (Google Layout Processor)
